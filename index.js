@@ -53,41 +53,7 @@ const startServer = async () => {
     console.log(`Environment: ${process.env.NODE_ENV}`);
   });
 };
-
 startServer();
 
 module.exports = app;
-// Routes
-app.get('/', (req, res) => {
-  res.json({ message: 'MediQueue Server is running!' });
-});
 
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'Server is healthy' });
-});
-
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/tutors', tutorRoutes);
-app.use('/api/bookings', bookingRoutes);
-
-// 404 Route
-app.use((req, res) => {
-  res.status(404).json({ message: 'Route not found' });
-});
-
-// Error Handling Middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(err.status || 500).json({
-    message: err.message || 'Internal Server Error',
-  });
-});
-
-// Start Server
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV}`);
-});
-
-module.exports = app;
