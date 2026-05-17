@@ -1,8 +1,18 @@
-const Tutor = require('../models/Tutor');
+const { getDB, ObjectId } = require('../config/db');
+
+const parseAvailableDays = (availableDays) => {
+  if (!availableDays) return [];
+  if (Array.isArray(availableDays)) return availableDays;
+  return String(availableDays)
+    .split(/[\s,]+/)
+    .map((day) => day.trim())
+    .filter(Boolean);
+};
 
 // Create Tutor
 exports.createTutor = async (req, res) => {
   try {
+    const db = getDB();
     const {
       tutorName,
       photo,
@@ -19,15 +29,14 @@ exports.createTutor = async (req, res) => {
       description,
     } = req.body;
 
-    // Validate required fields
     if (
       !tutorName ||
       !photo ||
       !subject ||
       !availableDays ||
       !availableTimeSlot ||
-      !hourlyFee ||
-      !totalSlot ||
+      hourlyFee === undefined ||
+      totalSlot === undefined ||
       !sessionStartDate ||
       !institution ||
       !experience ||
@@ -37,28 +46,31 @@ exports.createTutor = async (req, res) => {
       return res.status(400).json({ message: 'All required fields must be provided' });
     }
 
-    const newTutor = new Tutor({
+    const tutor = {
       tutorName,
       photo,
       subject,
-      availableDays,
+      availableDays: parseAvailableDays(availableDays),
       availableTimeSlot,
-      hourlyFee,
-      totalSlot,
-      sessionStartDate,
+      hourlyFee: Number(hourlyFee),
+      totalSlot: Number(totalSlot),
+      sessionStartDate: new Date(sessionStartDate),
       institution,
       experience,
       location,
       teachingMode,
-      description,
-      userId: req.user.id,
-    });
+      description: description || null,
+      userId: new ObjectId(req.user.id),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-    await newTutor.save();
+    const result = await db.collection('tutors').insertOne(tutor);
+    tutor._id = result.insertedId;
 
     return res.status(201).json({
       message: 'Tutor created successfully',
-      tutor: newTutor,
+      tutor,
     });
   } catch (error) {
     console.error('Create tutor error:', error);
@@ -69,26 +81,26 @@ exports.createTutor = async (req, res) => {
 // Get All Tutors with search and filter
 exports.getAllTutors = async (req, res) => {
   try {
+    const db = getDB();
     const { search, startDate, endDate } = req.query;
-    let query = {};
+    const query = {};
 
-    // Search by tutor name (case-insensitive)
     if (search) {
       query.tutorName = { $regex: search, $options: 'i' };
     }
 
-    // Filter by session start date
     if (startDate || endDate) {
       query.sessionStartDate = {};
-      if (startDate) {
-        query.sessionStartDate.$gte = new Date(startDate);
-      }
-      if (endDate) {
-        query.sessionStartDate.$lte = new Date(endDate);
-      }
+      if (startDate) query.sessionStartDate.$gte = new Date(startDate);
+      if (endDate) query.sessionStartDate.$lte = new Date(endDate);
     }
 
-    const tutors = await Tutor.find(query).populate('userId', 'name email photo').limit(100);
+    const tutors = await db
+      .collection('tutors')
+      .find(query)
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .toArray();
 
     return res.status(200).json({
       message: 'Tutors retrieved successfully',
@@ -104,7 +116,8 @@ exports.getAllTutors = async (req, res) => {
 // Get Single Tutor
 exports.getTutorById = async (req, res) => {
   try {
-    const tutor = await Tutor.findById(req.params.id).populate('userId', 'name email photo');
+    const db = getDB();
+    const tutor = await db.collection('tutors').findOne({ _id: new ObjectId(req.params.id) });
 
     if (!tutor) {
       return res.status(404).json({ message: 'Tutor not found' });
@@ -123,23 +136,35 @@ exports.getTutorById = async (req, res) => {
 // Update Tutor
 exports.updateTutor = async (req, res) => {
   try {
-    const tutor = await Tutor.findById(req.params.id);
+    const db = getDB();
+    const tutorId = new ObjectId(req.params.id);
+    const tutor = await db.collection('tutors').findOne({ _id: tutorId });
 
     if (!tutor) {
       return res.status(404).json({ message: 'Tutor not found' });
     }
 
-    // Check authorization
     if (tutor.userId.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized to update this tutor' });
     }
 
-    // Update fields
-    const updatedTutor = await Tutor.findByIdAndUpdate(
-      req.params.id,
-      { ...req.body },
-      { new: true, runValidators: true }
-    );
+    const updates = { ...req.body, updatedAt: new Date() };
+    if (updates.availableDays) {
+      updates.availableDays = parseAvailableDays(updates.availableDays);
+    }
+    if (updates.sessionStartDate) {
+      updates.sessionStartDate = new Date(updates.sessionStartDate);
+    }
+    if (updates.hourlyFee !== undefined) {
+      updates.hourlyFee = Number(updates.hourlyFee);
+    }
+    if (updates.totalSlot !== undefined) {
+      updates.totalSlot = Number(updates.totalSlot);
+    }
+    delete updates.userId;
+
+    await db.collection('tutors').updateOne({ _id: tutorId }, { $set: updates });
+    const updatedTutor = await db.collection('tutors').findOne({ _id: tutorId });
 
     return res.status(200).json({
       message: 'Tutor updated successfully',
@@ -154,18 +179,19 @@ exports.updateTutor = async (req, res) => {
 // Delete Tutor
 exports.deleteTutor = async (req, res) => {
   try {
-    const tutor = await Tutor.findById(req.params.id);
+    const db = getDB();
+    const tutorId = new ObjectId(req.params.id);
+    const tutor = await db.collection('tutors').findOne({ _id: tutorId });
 
     if (!tutor) {
       return res.status(404).json({ message: 'Tutor not found' });
     }
 
-    // Check authorization
     if (tutor.userId.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized to delete this tutor' });
     }
 
-    await Tutor.findByIdAndDelete(req.params.id);
+    await db.collection('tutors').deleteOne({ _id: tutorId });
 
     return res.status(200).json({
       message: 'Tutor deleted successfully',
@@ -179,7 +205,12 @@ exports.deleteTutor = async (req, res) => {
 // Get My Tutors
 exports.getMyTutors = async (req, res) => {
   try {
-    const tutors = await Tutor.find({ userId: req.user.id });
+    const db = getDB();
+    const tutors = await db
+      .collection('tutors')
+      .find({ userId: new ObjectId(req.user.id) })
+      .sort({ createdAt: -1 })
+      .toArray();
 
     return res.status(200).json({
       message: 'Your tutors retrieved successfully',

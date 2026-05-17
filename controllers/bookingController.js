@@ -1,65 +1,52 @@
-const Booking = require('../models/Booking');
-const Tutor = require('../models/Tutor');
+const { getDB, ObjectId } = require('../config/db');
 
 // Create Booking
 exports.createBooking = async (req, res) => {
   try {
+    const db = getDB();
     const { studentName, phone, tutorId, tutorName, studentEmail, sessionDate, sessionTime, notes } = req.body;
 
-    // Validate required fields
     if (!studentName || !phone || !tutorId || !tutorName || !studentEmail || !sessionDate) {
       return res.status(400).json({ message: 'Required fields are missing' });
     }
 
-    // Get tutor details
-    const tutor = await Tutor.findById(tutorId);
-
+    const tutor = await db.collection('tutors').findOne({ _id: new ObjectId(tutorId) });
     if (!tutor) {
       return res.status(404).json({ message: 'Tutor not found' });
     }
 
-    // Check if session date is before tutor's session start date
     const bookingDate = new Date(sessionDate);
     const tutorSessionDate = new Date(tutor.sessionStartDate);
-
     if (bookingDate < tutorSessionDate) {
-      return res.status(400).json({
-        message: 'Booking is not available yet for this tutor',
-      });
+      return res.status(400).json({ message: 'Booking is not available yet for this tutor' });
     }
 
-    // Check if slots are available
     if (tutor.totalSlot <= 0) {
-      return res.status(400).json({
-        message: 'No available slots left',
-      });
+      return res.status(400).json({ message: 'No available slots left' });
     }
 
-    // Create booking
-    const newBooking = new Booking({
+    const booking = {
       studentName,
       phone,
-      tutorId,
+      tutorId: tutor._id,
       tutorName,
       studentEmail,
-      studentId: req.user.id,
-      sessionDate,
+      studentId: new ObjectId(req.user.id),
+      sessionDate: new Date(sessionDate),
       sessionTime: sessionTime || tutor.availableTimeSlot,
       hourlyFee: tutor.hourlyFee,
       bookStatus: 'pending',
-      notes,
-    });
+      notes: notes || null,
+      bookingDate: new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-    await newBooking.save();
+    const result = await db.collection('bookings').insertOne(booking);
+    await db.collection('tutors').updateOne({ _id: tutor._id }, { $inc: { totalSlot: -1 } });
 
-    // Decrease tutor's total slot
-    tutor.totalSlot -= 1;
-    await tutor.save();
-
-    return res.status(201).json({
-      message: 'Booking created successfully',
-      booking: newBooking,
-    });
+    booking._id = result.insertedId;
+    return res.status(201).json({ message: 'Booking created successfully', booking });
   } catch (error) {
     console.error('Create booking error:', error);
     return res.status(500).json({ message: 'Failed to create booking', error: error.message });
@@ -69,15 +56,14 @@ exports.createBooking = async (req, res) => {
 // Get My Bookings
 exports.getMyBookings = async (req, res) => {
   try {
-    const bookings = await Booking.find({ studentId: req.user.id })
-      .populate('tutorId', 'tutorName subject hourlyFee')
-      .sort({ bookingDate: -1 });
+    const db = getDB();
+    const bookings = await db
+      .collection('bookings')
+      .find({ studentId: new ObjectId(req.user.id) })
+      .sort({ bookingDate: -1 })
+      .toArray();
 
-    return res.status(200).json({
-      message: 'Your bookings retrieved successfully',
-      count: bookings.length,
-      bookings,
-    });
+    return res.status(200).json({ message: 'Your bookings retrieved successfully', count: bookings.length, bookings });
   } catch (error) {
     console.error('Get my bookings error:', error);
     return res.status(500).json({ message: 'Failed to get bookings', error: error.message });
@@ -87,16 +73,14 @@ exports.getMyBookings = async (req, res) => {
 // Get All Bookings (Admin)
 exports.getAllBookings = async (req, res) => {
   try {
-    const bookings = await Booking.find()
-      .populate('tutorId', 'tutorName subject')
-      .populate('studentId', 'name email')
-      .sort({ bookingDate: -1 });
+    const db = getDB();
+    const bookings = await db
+      .collection('bookings')
+      .find()
+      .sort({ bookingDate: -1 })
+      .toArray();
 
-    return res.status(200).json({
-      message: 'All bookings retrieved successfully',
-      count: bookings.length,
-      bookings,
-    });
+    return res.status(200).json({ message: 'All bookings retrieved successfully', count: bookings.length, bookings });
   } catch (error) {
     console.error('Get all bookings error:', error);
     return res.status(500).json({ message: 'Failed to get bookings', error: error.message });
@@ -106,18 +90,16 @@ exports.getAllBookings = async (req, res) => {
 // Get Single Booking
 exports.getBookingById = async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id)
-      .populate('tutorId')
-      .populate('studentId', 'name email');
+    const db = getDB();
+    const booking = await db
+      .collection('bookings')
+      .findOne({ _id: new ObjectId(req.params.id) });
 
     if (!booking) {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    return res.status(200).json({
-      message: 'Booking retrieved successfully',
-      booking,
-    });
+    return res.status(200).json({ message: 'Booking retrieved successfully', booking });
   } catch (error) {
     console.error('Get booking error:', error);
     return res.status(500).json({ message: 'Failed to get booking', error: error.message });
@@ -127,37 +109,26 @@ exports.getBookingById = async (req, res) => {
 // Cancel Booking
 exports.cancelBooking = async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id);
+    const db = getDB();
+    const booking = await db.collection('bookings').findOne({ _id: new ObjectId(req.params.id) });
 
     if (!booking) {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    // Check authorization
     if (booking.studentId.toString() !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized to cancel this booking' });
     }
 
-    // Check if booking is already cancelled
     if (booking.bookStatus === 'cancelled') {
       return res.status(400).json({ message: 'Booking is already cancelled' });
     }
 
-    // Update booking status
-    booking.bookStatus = 'cancelled';
-    await booking.save();
+    await db.collection('bookings').updateOne({ _id: booking._id }, { $set: { bookStatus: 'cancelled', updatedAt: new Date() } });
+    await db.collection('tutors').updateOne({ _id: new ObjectId(booking.tutorId) }, { $inc: { totalSlot: 1 } });
 
-    // Restore tutor's slot
-    const tutor = await Tutor.findById(booking.tutorId);
-    if (tutor) {
-      tutor.totalSlot += 1;
-      await tutor.save();
-    }
-
-    return res.status(200).json({
-      message: 'Booking cancelled successfully',
-      booking,
-    });
+    const updatedBooking = await db.collection('bookings').findOne({ _id: booking._id });
+    return res.status(200).json({ message: 'Booking cancelled successfully', booking: updatedBooking });
   } catch (error) {
     console.error('Cancel booking error:', error);
     return res.status(500).json({ message: 'Failed to cancel booking', error: error.message });
@@ -167,26 +138,23 @@ exports.cancelBooking = async (req, res) => {
 // Update Booking Status (Admin)
 exports.updateBookingStatus = async (req, res) => {
   try {
+    const db = getDB();
     const { status } = req.body;
-
     if (!['pending', 'confirmed', 'completed', 'cancelled'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
-    const booking = await Booking.findByIdAndUpdate(
-      req.params.id,
-      { bookStatus: status },
-      { new: true }
+    const result = await db.collection('bookings').findOneAndUpdate(
+      { _id: new ObjectId(req.params.id) },
+      { $set: { bookStatus: status, updatedAt: new Date() } },
+      { returnDocument: 'after' }
     );
 
-    if (!booking) {
+    if (!result.value) {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    return res.status(200).json({
-      message: 'Booking status updated successfully',
-      booking,
-    });
+    return res.status(200).json({ message: 'Booking status updated successfully', booking: result.value });
   } catch (error) {
     console.error('Update booking status error:', error);
     return res.status(500).json({ message: 'Failed to update booking', error: error.message });
