@@ -15,10 +15,15 @@ const verifyPassword = (password, storedHash) => {
   return derivedKey === key;
 };
 
+const jwtSecret = process.env.JWT_SECRET;
+if (!jwtSecret) {
+  throw new Error('JWT_SECRET is required in environment variables');
+}
+
 const generateToken = (user) => {
   return jwt.sign(
     { id: user._id.toString(), email: user.email, role: user.role || 'student' },
-    process.env.JWT_SECRET || 'default_jwt_secret',
+    jwtSecret,
     { expiresIn: process.env.JWT_EXPIRE || '7d' }
   );
 };
