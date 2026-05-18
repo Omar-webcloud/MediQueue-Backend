@@ -203,3 +203,34 @@ exports.getCurrentUser = async (req, res) => {
     return res.status(500).json({ message: 'Failed to get user', error: error.message });
   }
 };
+
+exports.updateProfile = async (req, res) => {
+  try {
+    const { name, photo } = req.body;
+    const db = getDB();
+    if (!name && !photo) {
+      return res.status(400).json({ message: 'Name or photo is required to update profile' });
+    }
+    const updates = { updatedAt: new Date() };
+    if (name) updates.name = name;
+    if (photo) updates.photo = photo;
+    await db.collection('users').updateOne(
+      { _id: new ObjectId(req.user.id) },
+      { $set: updates }
+    );
+    const user = await db.collection('users').findOne({ _id: new ObjectId(req.user.id) });
+    return res.status(200).json({
+      message: 'Profile updated successfully',
+      user: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        photo: user.photo,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    return res.status(500).json({ message: 'Failed to update profile', error: error.message });
+  }
+};
