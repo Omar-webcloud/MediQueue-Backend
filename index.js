@@ -12,9 +12,9 @@ const bookingRoutes = require('./routes/bookingRoutes');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Initialize DB Connection
+
 connectDB().catch((err) => {
-  console.error('Database connection failed:', err);
+  console.error('Database pre-warm connection failed:', err.message);
 });
 
 // Middleware
@@ -22,6 +22,20 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error('Database connection middleware error:', err.message);
+    res.status(500).json({
+      message: 'Database connection failed. Please ensure the database is running and accessible.',
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined,
+    });
+  }
+});
 
 // Routes
 app.get('/', (req, res) => {

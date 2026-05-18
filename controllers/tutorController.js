@@ -86,7 +86,10 @@ exports.getAllTutors = async (req, res) => {
     const query = {};
 
     if (search) {
-      query.tutorName = { $regex: search, $options: 'i' };
+      query.$or = [
+        { tutorName: { $regex: search, $options: 'i' } },
+        { subject: { $regex: search, $options: 'i' } }
+      ];
     }
 
     if (startDate || endDate) {
